@@ -1,0 +1,7 @@
+version: "3"
+
+services:
+  redis:
+    image: "arm64v8/redis:6.2.2-alpine"
+    ports:
+      - 6379:6379

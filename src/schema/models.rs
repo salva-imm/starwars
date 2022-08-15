@@ -132,11 +132,6 @@ impl QueryRoot {
         let redis_client = ctx.data_unchecked::<bb8::Pool<RedisConnectionManager>>();
         let mut conn = redis_client.get().await.unwrap();
         let reply: String = cmd("GET").arg("foo").query_async(&mut *conn).await.unwrap();
-        println!("{:#?}", reply);
-        let reply2: String = cmd("GET").arg("foo").query_async(&mut *conn).await.unwrap();
-        println!("{:#?}", reply2);
-
-
 
         match episode {
             Some(episode_name) => {
@@ -191,7 +186,7 @@ impl QueryRoot {
     }
 }
 
-#[derive(Interface)]
+#[derive(Interface, Deserialize, Serialize)]
 #[graphql(
     field(name = "id", type = "&str"),
     field(name = "name", type = "&str"),

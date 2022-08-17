@@ -20,7 +20,7 @@ use bb8_redis::{
 
 
 /// One of the films in the Star Wars Trilogy
-#[derive(Enum, Copy, Clone, Eq, PartialEq)]
+#[derive(Enum, Copy, Clone, Eq, PartialEq, Deserialize, Serialize)]
 pub enum Episode {
     /// Released in 1977.
     NewHope,
@@ -32,23 +32,24 @@ pub enum Episode {
     Jedi,
 }
 
-pub struct Human<'a>(&'a StarWarsChar);
+#[derive(Deserialize, Serialize)]
+pub struct Human(StarWarsChar);
 
 /// A humanoid creature in the Star Wars universe.
 #[Object]
-impl<'a> Human<'a> {
+impl Human {
     /// The id of the human.
-    async fn id(&self) -> &str {
-        self.0.id
+    async fn id(&self) -> String {
+        self.0.id.to_string()
     }
 
     /// The name of the human.
-    async fn name(&self) -> &str {
-        self.0.name
+    async fn name(&self) -> String {
+        self.0.name.to_string()
     }
 
     /// The friends of the human, or an empty list if they have none.
-    async fn friends<'ctx>(&self, ctx: &Context<'ctx>) -> Vec<Character<'ctx>> {
+    async fn friends<'ctx>(&self, ctx: &Context<'ctx>) -> Vec<Character> {
         let star_wars = ctx.data_unchecked::<StarWars>();
         star_wars
             .friends(self.0)
@@ -69,24 +70,25 @@ impl<'a> Human<'a> {
     }
 
     /// The home planet of the human, or null if unknown.
-    async fn home_planet(&self) -> &Option<&str> {
+    async fn home_planet(&self) -> &Option<String> {
         &self.0.home_planet
     }
 }
 
-pub struct Droid<'a>(&'a StarWarsChar);
+#[derive(Deserialize, Serialize)]
+pub struct Droid(StarWarsChar);
 
 /// A mechanical creature in the Star Wars universe.
 #[Object]
-impl<'a> Droid<'a> {
+impl Droid {
     /// The id of the droid.
-    async fn id(&self) -> &str {
-        self.0.id
+    async fn id(&self) -> String {
+        self.0.id.to_string()
     }
 
     /// The name of the droid.
-    async fn name(&self) -> &str {
-        self.0.name
+    async fn name(&self) -> String {
+        self.0.name.to_string()
     }
 
     /// The friends of the droid, or an empty list if they have none.
@@ -111,8 +113,8 @@ impl<'a> Droid<'a> {
     }
 
     /// The primary function of the droid.
-    async fn primary_function(&self) -> &Option<&str> {
-        &self.0.primary_function
+    async fn primary_function(&self) -> Option<String> {
+        self.0.primary_function.clone()
     }
 }
 
@@ -127,7 +129,7 @@ impl QueryRoot {
             desc = "If omitted, returns the hero of the whole saga. If provided, returns the hero of that particular episode."
         )]
         episode: Option<Episode>,
-    ) -> Character<'a> {
+    ) -> Character {
         let star_wars = ctx.data_unchecked::<StarWars>();
         let redis_client = ctx.data_unchecked::<bb8::Pool<RedisConnectionManager>>();
         let mut conn = redis_client.get().await.unwrap();
@@ -149,7 +151,7 @@ impl QueryRoot {
         &self,
         ctx: &Context<'a>,
         #[graphql(desc = "id of the human")] id: String,
-    ) -> Option<Human<'a>> {
+    ) -> Option<Human> {
         ctx.data_unchecked::<StarWars>().human(&id).map(Human)
     }
 
@@ -160,7 +162,7 @@ impl QueryRoot {
         before: Option<String>,
         first: Option<i32>,
         last: Option<i32>,
-    ) -> Result<Connection<usize, Human<'a>>> {
+    ) -> Result<Connection<usize, Human>> {
         let humans = ctx.data_unchecked::<StarWars>().humans().to_vec();
         query_characters(after, before, first, last, &humans, Human).await
     }
@@ -169,7 +171,7 @@ impl QueryRoot {
         &self,
         ctx: &Context<'a>,
         #[graphql(desc = "id of the droid")] id: String,
-    ) -> Option<Droid<'a>> {
+    ) -> Option<Droid> {
         ctx.data_unchecked::<StarWars>().droid(&id).map(Droid)
     }
 
@@ -180,7 +182,7 @@ impl QueryRoot {
         before: Option<String>,
         first: Option<i32>,
         last: Option<i32>,
-    ) -> Result<Connection<usize, Droid<'a>>> {
+    ) -> Result<Connection<usize, Droid>> {
         let droids = ctx.data_unchecked::<StarWars>().droids().to_vec();
         query_characters(after, before, first, last, &droids, Droid).await
     }
@@ -193,9 +195,9 @@ impl QueryRoot {
     field(name = "friends", type = "Vec<Character<'ctx>>"),
     field(name = "appears_in", type = "&[Episode]")
 )]
-pub enum Character<'a> {
-    Human(Human<'a>),
-    Droid(Droid<'a>),
+pub enum Character {
+    Human(Human),
+    Droid(Droid),
 }
 
 async fn query_characters<'a, F, T>(
@@ -257,22 +259,22 @@ where
 }
 
 // ###
-
+#[derive(Deserialize, Serialize)]
 pub struct StarWarsChar {
-    id: &'static str,
-    name: &'static str,
+    id: String,
+    name: String,
     is_human: bool,
     friends: Vec<usize>,
     appears_in: Vec<Episode>,
-    home_planet: Option<&'static str>,
-    primary_function: Option<&'static str>,
+    home_planet: Option<String>,
+    primary_function: Option<String>,
 }
 
 pub struct StarWars {
     luke: usize,
     artoo: usize,
     chars: Slab<StarWarsChar>,
-    chars_by_id: HashMap<&'static str, usize>,
+    chars_by_id: HashMap<String, usize>,
 }
 
 impl StarWars {
@@ -281,28 +283,28 @@ impl StarWars {
         let mut chars = Slab::new();
 
         let luke = chars.insert(StarWarsChar {
-            id: "1000",
-            name: "Luke Skywalker",
+            id: "1000".to_string(),
+            name: "Luke Skywalker".to_string(),
             is_human: true,
             friends: vec![],
             appears_in: vec![],
-            home_planet: Some("Tatooine"),
+            home_planet: Some("Tatooine".to_string()),
             primary_function: None,
         });
 
         let vader = chars.insert(StarWarsChar {
-            id: "1001",
-            name: "Anakin Skywalker",
+            id: "1001".to_string(),
+            name: "Anakin Skywalker".to_string(),
             is_human: true,
             friends: vec![],
             appears_in: vec![],
-            home_planet: Some("Tatooine"),
+            home_planet: Some("Tatooine".to_string()),
             primary_function: None,
         });
 
         let han = chars.insert(StarWarsChar {
-            id: "1002",
-            name: "Han Solo",
+            id: "1002".to_string(),
+            name: "Han Solo".to_string(),
             is_human: true,
             friends: vec![],
             appears_in: vec![Episode::Empire, Episode::NewHope, Episode::Jedi],
@@ -311,18 +313,18 @@ impl StarWars {
         });
 
         let leia = chars.insert(StarWarsChar {
-            id: "1003",
-            name: "Leia Organa",
+            id: "1003".to_string(),
+            name: "Leia Organa".to_string(),
             is_human: true,
             friends: vec![],
             appears_in: vec![Episode::Empire, Episode::NewHope, Episode::Jedi],
-            home_planet: Some("Alderaa"),
+            home_planet: Some("Alderaa".to_string()),
             primary_function: None,
         });
 
         let tarkin = chars.insert(StarWarsChar {
-            id: "1004",
-            name: "Wilhuff Tarkin",
+            id: "1004".to_string(),
+            name: "Wilhuff Tarkin".to_string(),
             is_human: true,
             friends: vec![],
             appears_in: vec![Episode::Empire, Episode::NewHope, Episode::Jedi],
@@ -331,23 +333,23 @@ impl StarWars {
         });
 
         let threepio = chars.insert(StarWarsChar {
-            id: "2000",
-            name: "C-3PO",
+            id: "2000".to_string(),
+            name: "C-3PO".to_string(),
             is_human: false,
             friends: vec![],
             appears_in: vec![Episode::Empire, Episode::NewHope, Episode::Jedi],
             home_planet: None,
-            primary_function: Some("Protocol"),
+            primary_function: Some("Protocol".to_string()),
         });
 
         let artoo = chars.insert(StarWarsChar {
-            id: "2001",
-            name: "R2-D2",
+            id: "2001".to_string(),
+            name: "R2-D2".to_string(),
             is_human: false,
             friends: vec![],
             appears_in: vec![Episode::Empire, Episode::NewHope, Episode::Jedi],
             home_planet: None,
-            primary_function: Some("Astromech"),
+            primary_function: Some("Astromech".to_string()),
         });
 
         chars[luke].friends = vec![han, leia, threepio, artoo];
@@ -358,7 +360,7 @@ impl StarWars {
         chars[threepio].friends = vec![luke, han, leia, artoo];
         chars[artoo].friends = vec![luke, han, leia];
 
-        let chars_by_id = chars.iter().map(|(idx, ch)| (ch.id, idx)).collect();
+        let chars_by_id = chars.iter().map(|(idx, ch)| (ch.id.to_string(), idx)).collect();
         Self {
             luke,
             artoo,

@@ -9,7 +9,7 @@ use bb8_redis::{
 };
 mod schema;
 use async_graphql_actix_web::{GraphQLRequest, GraphQLResponse};
-use crate::schema::models::{QueryRoot, StarWars, StarWarsSchema};
+use crate::schema::models::{QueryRoot, StarWarsSchema};
 
 async fn index(schema: web::Data<StarWarsSchema>, req: GraphQLRequest) -> GraphQLResponse {
     schema.execute(req.into_inner()).await.into()
@@ -32,7 +32,6 @@ async fn main() -> std::io::Result<()> {
 
 
     let schema = Schema::build(QueryRoot, EmptyMutation, EmptySubscription)
-        .data(StarWars::new())
         .data(pool.clone())
         .finish();
 

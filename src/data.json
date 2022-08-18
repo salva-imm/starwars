@@ -1,0 +1,65 @@
+{
+  "1000": {
+    "id": "1000",
+    "name": "Luke Skywalker",
+    "is_human": true,
+    "friends": [1002, 1003, 2000, 2001],
+    "appears_in": [],
+    "home_planet": "Tatooine",
+    "primary_function": null
+  },
+  "1001": {
+    "id": "1001",
+    "name": "Anakin Skywalker",
+    "is_human": true,
+    "friends": [1004],
+    "appears_in": [],
+    "home_planet": "Tatooine",
+    "primary_function": null
+  },
+  "1002": {
+    "id": "1002",
+    "name": "Han Solo",
+    "is_human": true,
+    "friends": [1000, 1003, 2001],
+    "appears_in": ["Empire", "NewHope", "Jedi"],
+    "home_planet": null,
+    "primary_function": null
+  },
+  "1003": {
+    "id": "1003",
+    "name": "Leia Organa",
+    "is_human": true,
+    "friends": [1000, 1002, 2000, 2001],
+    "appears_in": ["Empire", "NewHope", "Jedi"],
+    "home_planet": "Alderaa",
+    "primary_function": null
+  },
+  "1004": {
+    "id": "1004",
+    "name": "Wilhuff Tarkin",
+    "is_human": true,
+    "friends": [1001],
+    "appears_in": ["Empire", "NewHope", "Jedi"],
+    "home_planet": null,
+    "primary_function": null
+  },
+  "2000": {
+    "id": "2000",
+    "name": "C-3PO",
+    "is_human": false,
+    "friends": [1000, 1002, 1003, 2001],
+    "appears_in": ["Empire", "NewHope", "Jedi"],
+    "home_planet": null,
+    "primary_function": "Protocol"
+  },
+  "2001": {
+    "id": "2001",
+    "name": "R2-D2",
+    "is_human": false,
+    "friends": [1000, 1002, 1003],
+    "appears_in": ["Empire", "NewHope", "Jedi"],
+    "home_planet": null,
+    "primary_function": "Astromech"
+  }
+}

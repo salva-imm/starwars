@@ -61,28 +61,29 @@ impl Human {
 
     /// The friends of the human, or an empty list if they have none.
     async fn friends<'ctx>(&self, ctx: &Context<'ctx>) -> Vec<Character> {
-        let star_wars = ctx.data_unchecked::<StarWars>();
-        star_wars
-            .friends(self.0)
-            .into_iter()
-            .map(|ch| {
-                if ch.is_human {
-                    Human(ch).into()
-                } else {
-                    Droid(ch).into()
-                }
-            })
-            .collect()
+        // let star_wars = ctx.data_unchecked::<StarWars>();
+        // star_wars
+        //     .friends(self.0)
+        //     .into_iter()
+        //     .map(|ch| {
+        //         if ch.is_human {
+        //             Human(ch).into()
+        //         } else {
+        //             Droid(ch).into()
+        //         }
+        //     })
+        //     .collect()
+        vec![]
     }
 
     /// Which movies they appear in.
-    async fn appears_in(&self) -> &[Episode] {
-        &self.0.appears_in
+    async fn appears_in(&self) -> Vec<Episode> {
+        self.0.appears_in.clone()
     }
 
     /// The home planet of the human, or null if unknown.
-    async fn home_planet(&self) -> &Option<String> {
-        &self.0.home_planet
+    async fn home_planet(&self) -> Option<String> {
+        self.0.home_planet.clone()
     }
 }
 
@@ -104,23 +105,24 @@ impl Droid {
 
     /// The friends of the droid, or an empty list if they have none.
     async fn friends<'ctx>(&self, ctx: &Context<'ctx>) -> Vec<Character> {
-        let star_wars = ctx.data_unchecked::<StarWars>();
-        star_wars
-            .friends(self.0)
-            .into_iter()
-            .map(|ch| {
-                if ch.is_human {
-                    Human(ch).into()
-                } else {
-                    Droid(ch).into()
-                }
-            })
-            .collect()
+        // let star_wars = ctx.data_unchecked::<StarWars>();
+        // star_wars
+        //     .friends(self.0)
+        //     .into_iter()
+        //     .map(|ch| {
+        //         if ch.is_human {
+        //             Human(ch).into()
+        //         } else {
+        //             Droid(ch).into()
+        //         }
+        //     })
+        //     .collect()
+        vec![]
     }
 
     /// Which movies they appear in.
-    async fn appears_in(&self) -> &[Episode] {
-        &self.0.appears_in
+    async fn appears_in(&self) -> Vec<Episode> {
+        self.0.appears_in.clone()
     }
 
     /// The primary function of the droid.
@@ -141,20 +143,31 @@ impl QueryRoot {
         )]
         episode: Option<Episode>,
     ) -> Character {
-        let star_wars = ctx.data_unchecked::<StarWars>();
+        // let star_wars = ctx.data_unchecked::<StarWars>();
         let redis_client = ctx.data_unchecked::<bb8::Pool<RedisConnectionManager>>();
         let mut conn = redis_client.get().await.unwrap();
-        let reply: String = cmd("GET").arg("foo").query_async(&mut *conn).await.unwrap();
+        // let reply: String = cmd("GET").arg("foo").query_async(&mut *conn).await.unwrap();
+        println!("jdhjffd");
 
         match episode {
             Some(episode_name) => {
                 if episode_name == Episode::Empire {
-                    Human(star_wars.chars.get(star_wars.luke).unwrap()).into()
+                    let key: Vec<String> = cmd("KEYS").arg("*luke").query_async(&mut *conn).await.unwrap();
+                    let reply: String = cmd("GET").arg(key.get(0)).query_async(&mut *conn).await.unwrap();
+                    let luke: StarWarsChar = serde_json::from_str(&reply).unwrap();
+                    Human(luke).into()
                 } else {
-                    Droid(star_wars.chars.get(star_wars.artoo).unwrap()).into()
+                    // Droid(star_wars.chars.get(star_wars.artoo).unwrap()).into()
+                    let reply: String = cmd("GET").arg("*artoo").query_async(&mut *conn).await.unwrap();
+                    let artoo: StarWarsChar = serde_json::from_str(&reply).unwrap();
+                    Droid(artoo).into()
                 }
             }
-            None => Human(star_wars.chars.get(star_wars.luke).unwrap()).into(),
+            None => {
+                let reply: String = cmd("GET").arg("*luke").query_async(&mut *conn).await.unwrap();
+                let luke: StarWarsChar = serde_json::from_str(&reply).unwrap();
+                Human(luke).into()
+            },
         }
     }
 
@@ -163,7 +176,13 @@ impl QueryRoot {
         ctx: &Context<'a>,
         #[graphql(desc = "id of the human")] id: String,
     ) -> Option<Human> {
-        ctx.data_unchecked::<StarWars>().human(&id).map(Human)
+        // ctx.data_unchecked::<StarWars>().human(&id).map(Human)
+        let redis_client = ctx.data_unchecked::<bb8::Pool<RedisConnectionManager>>();
+        let mut conn = redis_client.get().await.unwrap();
+        let reply: String = cmd("GET").arg("*").query_async(&mut *conn).await.unwrap();
+        let data: Vec<StarWarsChar> = serde_json::from_str(&reply).unwrap();
+        // data.into()
+        None
     }
 
     async fn humans<'a>(
@@ -174,8 +193,9 @@ impl QueryRoot {
         first: Option<i32>,
         last: Option<i32>,
     ) -> Result<Connection<usize, Human>> {
-        let humans = ctx.data_unchecked::<StarWars>().humans().to_vec();
-        query_characters(after, before, first, last, &humans, Human).await
+        // let humans = ctx.data_unchecked::<StarWars>().humans().to_vec();
+        // query_characters(after, before, first, last, &humans, Human).await
+        Ok(Connection::new(false, false))
     }
 
     async fn droid<'a>(
@@ -183,7 +203,8 @@ impl QueryRoot {
         ctx: &Context<'a>,
         #[graphql(desc = "id of the droid")] id: String,
     ) -> Option<Droid> {
-        ctx.data_unchecked::<StarWars>().droid(&id).map(Droid)
+        // ctx.data_unchecked::<StarWars>().droid(&id).map(Droid)
+        None
     }
 
     async fn droids<'a>(
@@ -194,17 +215,18 @@ impl QueryRoot {
         first: Option<i32>,
         last: Option<i32>,
     ) -> Result<Connection<usize, Droid>> {
-        let droids = ctx.data_unchecked::<StarWars>().droids().to_vec();
-        query_characters(after, before, first, last, &droids, Droid).await
+        // let droids = ctx.data_unchecked::<StarWars>().droids().to_vec();
+        // query_characters(after, before, first, last, &droids, Droid).await
+        Ok(Connection::new(false, false))
     }
 }
 
 #[derive(Interface, Deserialize, Serialize)]
 #[graphql(
-    field(name = "id", type = "&str"),
-    field(name = "name", type = "&str"),
-    field(name = "friends", type = "Vec<Character<'ctx>>"),
-    field(name = "appears_in", type = "&[Episode]")
+    field(name = "id", type = "String"),
+    field(name = "name", type = "String"),
+    field(name = "friends", type = "Vec<Character>"),
+    field(name = "appears_in", type = "Vec<Episode>")
 )]
 pub enum Character {
     Human(Human),

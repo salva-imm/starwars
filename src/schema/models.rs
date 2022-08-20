@@ -4,12 +4,9 @@ use async_graphql::{
     connection::{query, Connection, Edge},
     Context, Enum, Error, Interface, Object, OutputType, Result,
 };
-use std::collections::HashMap;
-use std::ops::Deref;
 use serde::{Deserialize, Serialize};
 
 use async_graphql::{EmptyMutation, EmptySubscription, Schema};
-use slab::Slab;
 
 pub type StarWarsSchema = Schema<QueryRoot, EmptyMutation, EmptySubscription>;
 
@@ -189,7 +186,7 @@ impl QueryRoot {
         // ctx.data_unchecked::<StarWars>().human(&id).map(Human)
         let redis_client = ctx.data_unchecked::<bb8::Pool<RedisConnectionManager>>();
         let mut conn = redis_client.get().await.unwrap();
-        let reply: String = get_data_from_redis(&mut *conn, "*luke".to_string()).await.unwrap();
+        let reply: String = get_data_from_redis(&mut *conn, format!("{}*", id)).await.unwrap();
         let data: StarWarsChar = serde_json::from_str(&reply).unwrap();
         Human(data).into()
     }
@@ -227,8 +224,11 @@ impl QueryRoot {
         ctx: &Context<'a>,
         #[graphql(desc = "id of the droid")] id: String,
     ) -> Option<Droid> {
-        // ctx.data_unchecked::<StarWars>().droid(&id).map(Droid)
-        None
+        let redis_client = ctx.data_unchecked::<bb8::Pool<RedisConnectionManager>>();
+        let mut conn = redis_client.get().await.unwrap();
+        let reply: String = get_data_from_redis(&mut *conn, format!("{}*", id)).await.unwrap();
+        let data: StarWarsChar = serde_json::from_str(&reply).unwrap();
+        Droid(data).into()
     }
 
     async fn droids<'a>(

@@ -1,6 +1,5 @@
 #![allow(clippy::needless_lifetimes)]
 
-use std::borrow::BorrowMut;
 use async_graphql::{
     connection::{query, Connection, Edge},
     Context, Enum, Error, Interface, Object, OutputType, Result,
@@ -120,19 +119,19 @@ impl Droid {
 
     /// The friends of the droid, or an empty list if they have none.
     async fn friends<'ctx>(&self, ctx: &Context<'ctx>) -> Vec<Character> {
-        // let star_wars = ctx.data_unchecked::<StarWars>();
-        // star_wars
-        //     .friends(self.0)
-        //     .into_iter()
-        //     .map(|ch| {
-        //         if ch.is_human {
-        //             Human(ch).into()
-        //         } else {
-        //             Droid(ch).into()
-        //         }
-        //     })
-        //     .collect()
-        vec![]
+        let redis_client = ctx.data_unchecked::<bb8::Pool<RedisConnectionManager>>();
+        let x = self.0.friends.iter().map(|id| async move {
+            let mut conn = redis_client.get().await.unwrap();
+            let reply: String = get_data_from_redis(&mut *conn, format!("{}*", id)).await.unwrap();
+            let friend: StarWarsChar = serde_json::from_str(&reply).unwrap();
+            if friend.is_human{
+                Human(friend).into()
+            }else{
+                Droid(friend).into()
+            }
+        }).collect::<Vec<_>>();
+        let friends_list: Vec<Character> = future::join_all( x).await;
+        friends_list
     }
 
     /// Which movies they appear in.

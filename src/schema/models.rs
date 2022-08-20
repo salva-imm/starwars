@@ -4,11 +4,9 @@ use async_graphql::{
     connection::{query, Connection, Edge},
     Context, Enum, Error, Interface, Object, OutputType, Result,
 };
-use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
 
 use async_graphql::{EmptyMutation, EmptySubscription, Schema};
-use slab::Slab;
 
 pub type StarWarsSchema = Schema<QueryRoot, EmptyMutation, EmptySubscription>;
 
@@ -17,10 +15,11 @@ use bb8_redis::{
     redis::cmd,
     RedisConnectionManager,
 };
+use futures::future;
 
 
 /// One of the films in the Star Wars Trilogy
-#[derive(Enum, Copy, Clone, Eq, PartialEq, Deserialize, Serialize)]
+#[derive(Enum, Copy, Clone, Eq, PartialEq, Deserialize, Serialize, Debug)]
 pub enum Episode {
     /// Released in 1977.
     NewHope,
@@ -32,7 +31,7 @@ pub enum Episode {
     Jedi,
 }
 
-#[derive(Deserialize, Serialize)]
+#[derive(Deserialize, Serialize, Debug, Clone)]
 pub struct StarWarsChar {
     id: String,
     name: String,
@@ -43,8 +42,20 @@ pub struct StarWarsChar {
     primary_function: Option<String>,
 }
 
-#[derive(Deserialize, Serialize)]
+#[derive(Deserialize, Serialize, Debug)]
 pub struct Human(StarWarsChar);
+
+async fn get_data_from_redis(conn: &mut bb8_redis::redis::aio::Connection, key: String) -> Result<String> {
+    let key: Vec<String> = cmd("KEYS")
+        .arg(key)
+        .query_async(conn)
+        .await.unwrap();
+    let data: String = cmd("GET")
+        .arg(key.get(0))
+        .query_async(conn)
+        .await?;
+    Ok(data)
+}
 
 /// A humanoid creature in the Star Wars universe.
 #[Object]
@@ -61,32 +72,33 @@ impl Human {
 
     /// The friends of the human, or an empty list if they have none.
     async fn friends<'ctx>(&self, ctx: &Context<'ctx>) -> Vec<Character> {
-        let star_wars = ctx.data_unchecked::<StarWars>();
-        star_wars
-            .friends(self.0)
-            .into_iter()
-            .map(|ch| {
-                if ch.is_human {
-                    Human(ch).into()
-                } else {
-                    Droid(ch).into()
-                }
-            })
-            .collect()
+        let redis_client = ctx.data_unchecked::<bb8::Pool<RedisConnectionManager>>();
+        let x = self.0.friends.iter().map(|id| async move {
+            let mut conn = redis_client.get().await.unwrap();
+            let reply: String = get_data_from_redis(&mut *conn, format!("{}*", id)).await.unwrap();
+            let friend: StarWarsChar = serde_json::from_str(&reply).unwrap();
+            if friend.is_human{
+                Human(friend).into()
+            }else{
+                Droid(friend).into()
+            }
+        }).collect::<Vec<_>>();
+        let friends_list: Vec<Character> = future::join_all( x).await;
+        friends_list
     }
 
     /// Which movies they appear in.
-    async fn appears_in(&self) -> &[Episode] {
-        &self.0.appears_in
+    async fn appears_in(&self) -> Vec<Episode> {
+        self.0.appears_in.clone()
     }
 
     /// The home planet of the human, or null if unknown.
-    async fn home_planet(&self) -> &Option<String> {
-        &self.0.home_planet
+    async fn home_planet(&self) -> Option<String> {
+        self.0.home_planet.clone()
     }
 }
 
-#[derive(Deserialize, Serialize)]
+#[derive(Deserialize, Serialize, Debug)]
 pub struct Droid(StarWarsChar);
 
 /// A mechanical creature in the Star Wars universe.
@@ -104,23 +116,24 @@ impl Droid {
 
     /// The friends of the droid, or an empty list if they have none.
     async fn friends<'ctx>(&self, ctx: &Context<'ctx>) -> Vec<Character> {
-        let star_wars = ctx.data_unchecked::<StarWars>();
-        star_wars
-            .friends(self.0)
-            .into_iter()
-            .map(|ch| {
-                if ch.is_human {
-                    Human(ch).into()
-                } else {
-                    Droid(ch).into()
-                }
-            })
-            .collect()
+        let redis_client = ctx.data_unchecked::<bb8::Pool<RedisConnectionManager>>();
+        let x = self.0.friends.iter().map(|id| async move {
+            let mut conn = redis_client.get().await.unwrap();
+            let reply: String = get_data_from_redis(&mut *conn, format!("{}*", id)).await.unwrap();
+            let friend: StarWarsChar = serde_json::from_str(&reply).unwrap();
+            if friend.is_human{
+                Human(friend).into()
+            }else{
+                Droid(friend).into()
+            }
+        }).collect::<Vec<_>>();
+        let friends_list: Vec<Character> = future::join_all( x).await;
+        friends_list
     }
 
     /// Which movies they appear in.
-    async fn appears_in(&self) -> &[Episode] {
-        &self.0.appears_in
+    async fn appears_in(&self) -> Vec<Episode> {
+        self.0.appears_in.clone()
     }
 
     /// The primary function of the droid.
@@ -141,20 +154,27 @@ impl QueryRoot {
         )]
         episode: Option<Episode>,
     ) -> Character {
-        let star_wars = ctx.data_unchecked::<StarWars>();
+        // let star_wars = ctx.data_unchecked::<StarWars>();
         let redis_client = ctx.data_unchecked::<bb8::Pool<RedisConnectionManager>>();
         let mut conn = redis_client.get().await.unwrap();
-        let reply: String = cmd("GET").arg("foo").query_async(&mut *conn).await.unwrap();
 
         match episode {
             Some(episode_name) => {
                 if episode_name == Episode::Empire {
-                    Human(star_wars.chars.get(star_wars.luke).unwrap()).into()
+                    let reply: String = get_data_from_redis(&mut *conn, "*luke".to_string()).await.unwrap();
+                    let luke: StarWarsChar = serde_json::from_str(&reply).unwrap();
+                    Human(luke).into()
                 } else {
-                    Droid(star_wars.chars.get(star_wars.artoo).unwrap()).into()
+                    let reply: String = get_data_from_redis(&mut *conn, "*artoo".to_string()).await.unwrap();
+                    let artoo: StarWarsChar = serde_json::from_str(&reply).unwrap();
+                    Droid(artoo).into()
                 }
             }
-            None => Human(star_wars.chars.get(star_wars.luke).unwrap()).into(),
+            None => {
+                let reply: String = cmd("GET").arg("*luke").query_async(&mut *conn).await.unwrap();
+                let luke: StarWarsChar = serde_json::from_str(&reply).unwrap();
+                Human(luke).into()
+            },
         }
     }
 
@@ -163,7 +183,12 @@ impl QueryRoot {
         ctx: &Context<'a>,
         #[graphql(desc = "id of the human")] id: String,
     ) -> Option<Human> {
-        ctx.data_unchecked::<StarWars>().human(&id).map(Human)
+        // ctx.data_unchecked::<StarWars>().human(&id).map(Human)
+        let redis_client = ctx.data_unchecked::<bb8::Pool<RedisConnectionManager>>();
+        let mut conn = redis_client.get().await.unwrap();
+        let reply: String = get_data_from_redis(&mut *conn, format!("{}*", id)).await.unwrap();
+        let data: StarWarsChar = serde_json::from_str(&reply).unwrap();
+        Human(data).into()
     }
 
     async fn humans<'a>(
@@ -174,8 +199,24 @@ impl QueryRoot {
         first: Option<i32>,
         last: Option<i32>,
     ) -> Result<Connection<usize, Human>> {
-        let humans = ctx.data_unchecked::<StarWars>().humans().to_vec();
-        query_characters(after, before, first, last, &humans, Human).await
+        let redis_client = ctx.data_unchecked::<bb8::Pool<RedisConnectionManager>>();
+        let mut conn = redis_client.get().await.unwrap();
+        let keys: Vec<String> = cmd("KEYS")
+        .arg("*")
+        .query_async(&mut *conn)
+        .await?;
+        let data: Vec<String> = cmd("MGET")
+            .arg(keys)
+            .query_async(&mut *conn)
+            .await?;
+        let data = data.iter().filter(|d| {
+             let x: StarWarsChar = serde_json::from_str(d).unwrap();
+            x.is_human
+        }).map(|d| {
+            let x: StarWarsChar = serde_json::from_str(d).unwrap();
+            x
+        }).collect::<Vec<StarWarsChar>>();
+        query_characters(after, before, first, last, data, Human).await
     }
 
     async fn droid<'a>(
@@ -183,7 +224,11 @@ impl QueryRoot {
         ctx: &Context<'a>,
         #[graphql(desc = "id of the droid")] id: String,
     ) -> Option<Droid> {
-        ctx.data_unchecked::<StarWars>().droid(&id).map(Droid)
+        let redis_client = ctx.data_unchecked::<bb8::Pool<RedisConnectionManager>>();
+        let mut conn = redis_client.get().await.unwrap();
+        let reply: String = get_data_from_redis(&mut *conn, format!("{}*", id)).await.unwrap();
+        let data: StarWarsChar = serde_json::from_str(&reply).unwrap();
+        Droid(data).into()
     }
 
     async fn droids<'a>(
@@ -194,17 +239,33 @@ impl QueryRoot {
         first: Option<i32>,
         last: Option<i32>,
     ) -> Result<Connection<usize, Droid>> {
-        let droids = ctx.data_unchecked::<StarWars>().droids().to_vec();
-        query_characters(after, before, first, last, &droids, Droid).await
+        let redis_client = ctx.data_unchecked::<bb8::Pool<RedisConnectionManager>>();
+        let mut conn = redis_client.get().await.unwrap();
+        let keys: Vec<String> = cmd("KEYS")
+        .arg("*")
+        .query_async(&mut *conn)
+        .await?;
+        let data: Vec<String> = cmd("MGET")
+            .arg(keys)
+            .query_async(&mut *conn)
+            .await?;
+        let data = data.iter().filter(|d| {
+             let x: StarWarsChar = serde_json::from_str(d).unwrap();
+            !x.is_human
+        }).map(|d| {
+            let x: StarWarsChar = serde_json::from_str(d).unwrap();
+            x
+        }).collect::<Vec<StarWarsChar>>();
+        query_characters(after, before, first, last, data, Droid).await
     }
 }
 
-#[derive(Interface, Deserialize, Serialize)]
+#[derive(Interface, Deserialize, Serialize, Debug)]
 #[graphql(
-    field(name = "id", type = "&str"),
-    field(name = "name", type = "&str"),
-    field(name = "friends", type = "Vec<Character<'ctx>>"),
-    field(name = "appears_in", type = "&[Episode]")
+    field(name = "id", type = "String"),
+    field(name = "name", type = "String"),
+    field(name = "friends", type = "Vec<Character>"),
+    field(name = "appears_in", type = "Vec<Episode>")
 )]
 pub enum Character {
     Human(Human),
@@ -216,11 +277,11 @@ async fn query_characters<'a, F, T>(
     before: Option<String>,
     first: Option<i32>,
     last: Option<i32>,
-    characters: &[&'a StarWarsChar],
+    characters: Vec<StarWarsChar>,
     map_to: F,
 ) -> Result<Connection<usize, T>>
 where
-    F: Fn(&'a StarWarsChar) -> T,
+    F: Fn(StarWarsChar) -> T,
     T: OutputType,
 {
     query(
@@ -258,157 +319,13 @@ where
 
             let mut connection = Connection::new(start > 0, end < characters.len());
             connection.edges.extend(
-                slice
+                slice.to_vec()
                     .iter()
                     .enumerate()
-                    .map(|(idx, item)| Edge::new(start + idx, (map_to)(*item))),
+                    .map(move |(idx, item)| Edge::new(start + idx, map_to(item.clone()))),
             );
             Ok::<_, Error>(connection)
         },
     )
     .await
 }
-
-// ###
-
-
-// pub struct StarWars {
-//     luke: usize,
-//     artoo: usize,
-//     chars: Slab<StarWarsChar>,
-//     chars_by_id: HashMap<String, usize>,
-// }
-//
-// impl StarWars {
-//     #[allow(clippy::new_without_default)]
-//     pub fn new() -> Self {
-//         let mut chars = Slab::new();
-//
-//         let luke = chars.insert(StarWarsChar {
-//             id: "1000".to_string(),
-//             name: "Luke Skywalker".to_string(),
-//             is_human: true,
-//             friends: vec![],
-//             appears_in: vec![],
-//             home_planet: Some("Tatooine".to_string()),
-//             primary_function: None,
-//         });
-//
-//         let vader = chars.insert(StarWarsChar {
-//             id: "1001".to_string(),
-//             name: "Anakin Skywalker".to_string(),
-//             is_human: true,
-//             friends: vec![],
-//             appears_in: vec![],
-//             home_planet: Some("Tatooine".to_string()),
-//             primary_function: None,
-//         });
-//
-//         let han = chars.insert(StarWarsChar {
-//             id: "1002".to_string(),
-//             name: "Han Solo".to_string(),
-//             is_human: true,
-//             friends: vec![],
-//             appears_in: vec![Episode::Empire, Episode::NewHope, Episode::Jedi],
-//             home_planet: None,
-//             primary_function: None,
-//         });
-//
-//         let leia = chars.insert(StarWarsChar {
-//             id: "1003".to_string(),
-//             name: "Leia Organa".to_string(),
-//             is_human: true,
-//             friends: vec![],
-//             appears_in: vec![Episode::Empire, Episode::NewHope, Episode::Jedi],
-//             home_planet: Some("Alderaa".to_string()),
-//             primary_function: None,
-//         });
-//
-//         let tarkin = chars.insert(StarWarsChar {
-//             id: "1004".to_string(),
-//             name: "Wilhuff Tarkin".to_string(),
-//             is_human: true,
-//             friends: vec![],
-//             appears_in: vec![Episode::Empire, Episode::NewHope, Episode::Jedi],
-//             home_planet: None,
-//             primary_function: None,
-//         });
-//
-//         let threepio = chars.insert(StarWarsChar {
-//             id: "2000".to_string(),
-//             name: "C-3PO".to_string(),
-//             is_human: false,
-//             friends: vec![],
-//             appears_in: vec![Episode::Empire, Episode::NewHope, Episode::Jedi],
-//             home_planet: None,
-//             primary_function: Some("Protocol".to_string()),
-//         });
-//
-//         let artoo = chars.insert(StarWarsChar {
-//             id: "2001".to_string(),
-//             name: "R2-D2".to_string(),
-//             is_human: false,
-//             friends: vec![],
-//             appears_in: vec![Episode::Empire, Episode::NewHope, Episode::Jedi],
-//             home_planet: None,
-//             primary_function: Some("Astromech".to_string()),
-//         });
-//
-//         chars[luke].friends = vec![han, leia, threepio, artoo];
-//         chars[vader].friends = vec![tarkin];
-//         chars[han].friends = vec![luke, leia, artoo];
-//         chars[leia].friends = vec![luke, han, threepio, artoo];
-//         chars[tarkin].friends = vec![vader];
-//         chars[threepio].friends = vec![luke, han, leia, artoo];
-//         chars[artoo].friends = vec![luke, han, leia];
-//
-//         let chars_by_id = chars.iter().map(|(idx, ch)| (ch.id.to_string(), idx)).collect();
-//         Self {
-//             luke,
-//             artoo,
-//             chars,
-//             chars_by_id,
-//         }
-//     }
-//
-//     pub fn human(&self, id: &str) -> Option<&StarWarsChar> {
-//         self.chars_by_id
-//             .get(id)
-//             .copied()
-//             .map(|idx| self.chars.get(idx).unwrap())
-//             .filter(|ch| ch.is_human)
-//     }
-//
-//     pub fn droid(&self, id: &str) -> Option<&StarWarsChar> {
-//         self.chars_by_id
-//             .get(id)
-//             .copied()
-//             .map(|idx| self.chars.get(idx).unwrap())
-//             .filter(|ch| !ch.is_human)
-//     }
-//
-//     pub fn humans(&self) -> Vec<&StarWarsChar> {
-//         self.chars
-//             .iter()
-//             .filter(|(_, ch)| ch.is_human)
-//             .map(|(_, ch)| ch)
-//             .collect()
-//     }
-//
-//     pub fn droids(&self) -> Vec<&StarWarsChar> {
-//         self.chars
-//             .iter()
-//             .filter(|(_, ch)| !ch.is_human)
-//             .map(|(_, ch)| ch)
-//             .collect()
-//     }
-//
-//     pub fn friends(&self, ch: &StarWarsChar) -> Vec<&StarWarsChar> {
-//         ch.friends
-//             .iter()
-//             .copied()
-//             .filter_map(|id| self.chars.get(id))
-//             .collect()
-//     }
-// }
-// ###

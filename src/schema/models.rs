@@ -15,6 +15,7 @@ use bb8_redis::{
     redis::cmd,
     RedisConnectionManager,
 };
+use bb8_redis::bb8::PooledConnection;
 use futures::future;
 
 
@@ -44,6 +45,11 @@ pub struct StarWarsChar {
 
 #[derive(Deserialize, Serialize, Debug)]
 pub struct Human(StarWarsChar);
+
+async fn get_redis_conn<'ctx>(ctx: &Context<'ctx>) -> PooledConnection<'ctx, RedisConnectionManager>{
+    let redis_client = ctx.data_unchecked::<bb8::Pool<RedisConnectionManager>>();
+    redis_client.get().await.unwrap()
+}
 
 async fn get_data_from_redis(conn: &mut bb8_redis::redis::aio::Connection, key: String) -> Result<String> {
     let key: Vec<String> = cmd("KEYS")
@@ -154,9 +160,7 @@ impl QueryRoot {
         )]
         episode: Option<Episode>,
     ) -> Character {
-        // let star_wars = ctx.data_unchecked::<StarWars>();
-        let redis_client = ctx.data_unchecked::<bb8::Pool<RedisConnectionManager>>();
-        let mut conn = redis_client.get().await.unwrap();
+        let mut conn = get_redis_conn(&ctx).await;
 
         match episode {
             Some(episode_name) => {
@@ -183,9 +187,7 @@ impl QueryRoot {
         ctx: &Context<'a>,
         #[graphql(desc = "id of the human")] id: String,
     ) -> Option<Human> {
-        // ctx.data_unchecked::<StarWars>().human(&id).map(Human)
-        let redis_client = ctx.data_unchecked::<bb8::Pool<RedisConnectionManager>>();
-        let mut conn = redis_client.get().await.unwrap();
+        let mut conn = get_redis_conn(&ctx).await;
         let reply: String = get_data_from_redis(&mut *conn, format!("{}*", id)).await.unwrap();
         let data: StarWarsChar = serde_json::from_str(&reply).unwrap();
         Human(data).into()
@@ -199,8 +201,7 @@ impl QueryRoot {
         first: Option<i32>,
         last: Option<i32>,
     ) -> Result<Connection<usize, Human>> {
-        let redis_client = ctx.data_unchecked::<bb8::Pool<RedisConnectionManager>>();
-        let mut conn = redis_client.get().await.unwrap();
+        let mut conn = get_redis_conn(&ctx).await;
         let keys: Vec<String> = cmd("KEYS")
         .arg("*")
         .query_async(&mut *conn)
@@ -224,8 +225,7 @@ impl QueryRoot {
         ctx: &Context<'a>,
         #[graphql(desc = "id of the droid")] id: String,
     ) -> Option<Droid> {
-        let redis_client = ctx.data_unchecked::<bb8::Pool<RedisConnectionManager>>();
-        let mut conn = redis_client.get().await.unwrap();
+        let mut conn = get_redis_conn(&ctx).await;
         let reply: String = get_data_from_redis(&mut *conn, format!("{}*", id)).await.unwrap();
         let data: StarWarsChar = serde_json::from_str(&reply).unwrap();
         Droid(data).into()
@@ -239,8 +239,7 @@ impl QueryRoot {
         first: Option<i32>,
         last: Option<i32>,
     ) -> Result<Connection<usize, Droid>> {
-        let redis_client = ctx.data_unchecked::<bb8::Pool<RedisConnectionManager>>();
-        let mut conn = redis_client.get().await.unwrap();
+        let mut conn = get_redis_conn(&ctx).await;
         let keys: Vec<String> = cmd("KEYS")
         .arg("*")
         .query_async(&mut *conn)

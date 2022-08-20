@@ -34,7 +34,7 @@ pub enum Episode {
     Jedi,
 }
 
-#[derive(Deserialize, Serialize, Debug)]
+#[derive(Deserialize, Serialize, Debug, Clone)]
 pub struct StarWarsChar {
     id: String,
     name: String,
@@ -189,10 +189,9 @@ impl QueryRoot {
         // ctx.data_unchecked::<StarWars>().human(&id).map(Human)
         let redis_client = ctx.data_unchecked::<bb8::Pool<RedisConnectionManager>>();
         let mut conn = redis_client.get().await.unwrap();
-        let reply: String = cmd("GET").arg("*").query_async(&mut *conn).await.unwrap();
-        let data: Vec<StarWarsChar> = serde_json::from_str(&reply).unwrap();
-        // data.into()
-        None
+        let reply: String = get_data_from_redis(&mut *conn, "*luke".to_string()).await.unwrap();
+        let data: StarWarsChar = serde_json::from_str(&reply).unwrap();
+        Human(data).into()
     }
 
     async fn humans<'a>(
@@ -203,9 +202,24 @@ impl QueryRoot {
         first: Option<i32>,
         last: Option<i32>,
     ) -> Result<Connection<usize, Human>> {
-        // let humans = ctx.data_unchecked::<StarWars>().humans().to_vec();
-        // query_characters(after, before, first, last, &humans, Human).await
-        Ok(Connection::new(false, false))
+        let redis_client = ctx.data_unchecked::<bb8::Pool<RedisConnectionManager>>();
+        let mut conn = redis_client.get().await.unwrap();
+        let keys: Vec<String> = cmd("KEYS")
+        .arg("*")
+        .query_async(&mut *conn)
+        .await?;
+        let data: Vec<String> = cmd("MGET")
+            .arg(keys)
+            .query_async(&mut *conn)
+            .await?;
+        let data = data.iter().filter(|d| {
+             let x: StarWarsChar = serde_json::from_str(d).unwrap();
+            x.is_human
+        }).map(|d| {
+            let x: StarWarsChar = serde_json::from_str(d).unwrap();
+            x
+        }).collect::<Vec<StarWarsChar>>();
+        query_characters(after, before, first, last, data, Human).await
     }
 
     async fn droid<'a>(
@@ -225,9 +239,24 @@ impl QueryRoot {
         first: Option<i32>,
         last: Option<i32>,
     ) -> Result<Connection<usize, Droid>> {
-        // let droids = ctx.data_unchecked::<StarWars>().droids().to_vec();
-        // query_characters(after, before, first, last, &droids, Droid).await
-        Ok(Connection::new(false, false))
+        let redis_client = ctx.data_unchecked::<bb8::Pool<RedisConnectionManager>>();
+        let mut conn = redis_client.get().await.unwrap();
+        let keys: Vec<String> = cmd("KEYS")
+        .arg("*")
+        .query_async(&mut *conn)
+        .await?;
+        let data: Vec<String> = cmd("MGET")
+            .arg(keys)
+            .query_async(&mut *conn)
+            .await?;
+        let data = data.iter().filter(|d| {
+             let x: StarWarsChar = serde_json::from_str(d).unwrap();
+            !x.is_human
+        }).map(|d| {
+            let x: StarWarsChar = serde_json::from_str(d).unwrap();
+            x
+        }).collect::<Vec<StarWarsChar>>();
+        query_characters(after, before, first, last, data, Droid).await
     }
 }
 
@@ -248,11 +277,11 @@ async fn query_characters<'a, F, T>(
     before: Option<String>,
     first: Option<i32>,
     last: Option<i32>,
-    characters: &[&'a StarWarsChar],
+    characters: Vec<StarWarsChar>,
     map_to: F,
 ) -> Result<Connection<usize, T>>
 where
-    F: Fn(&'a StarWarsChar) -> T,
+    F: Fn(StarWarsChar) -> T,
     T: OutputType,
 {
     query(
@@ -290,10 +319,10 @@ where
 
             let mut connection = Connection::new(start > 0, end < characters.len());
             connection.edges.extend(
-                slice
+                slice.to_vec()
                     .iter()
                     .enumerate()
-                    .map(|(idx, item)| Edge::new(start + idx, (map_to)(*item))),
+                    .map(move |(idx, item)| Edge::new(start + idx, map_to(item.clone()))),
             );
             Ok::<_, Error>(connection)
         },

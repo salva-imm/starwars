@@ -1,10 +1,12 @@
 #![allow(clippy::needless_lifetimes)]
 
+use std::borrow::BorrowMut;
 use async_graphql::{
     connection::{query, Connection, Edge},
     Context, Enum, Error, Interface, Object, OutputType, Result,
 };
 use std::collections::HashMap;
+use std::ops::Deref;
 use serde::{Deserialize, Serialize};
 
 use async_graphql::{EmptyMutation, EmptySubscription, Schema};
@@ -17,10 +19,11 @@ use bb8_redis::{
     redis::cmd,
     RedisConnectionManager,
 };
+use futures::future;
 
 
 /// One of the films in the Star Wars Trilogy
-#[derive(Enum, Copy, Clone, Eq, PartialEq, Deserialize, Serialize)]
+#[derive(Enum, Copy, Clone, Eq, PartialEq, Deserialize, Serialize, Debug)]
 pub enum Episode {
     /// Released in 1977.
     NewHope,
@@ -32,7 +35,7 @@ pub enum Episode {
     Jedi,
 }
 
-#[derive(Deserialize, Serialize)]
+#[derive(Deserialize, Serialize, Debug)]
 pub struct StarWarsChar {
     id: String,
     name: String,
@@ -43,8 +46,20 @@ pub struct StarWarsChar {
     primary_function: Option<String>,
 }
 
-#[derive(Deserialize, Serialize)]
+#[derive(Deserialize, Serialize, Debug)]
 pub struct Human(StarWarsChar);
+
+async fn get_data_from_redis(conn: &mut bb8_redis::redis::aio::Connection, key: String) -> Result<String> {
+    let key: Vec<String> = cmd("KEYS")
+        .arg(key)
+        .query_async(conn)
+        .await.unwrap();
+    let data: String = cmd("GET")
+        .arg(key.get(0))
+        .query_async(conn)
+        .await?;
+    Ok(data)
+}
 
 /// A humanoid creature in the Star Wars universe.
 #[Object]
@@ -61,19 +76,19 @@ impl Human {
 
     /// The friends of the human, or an empty list if they have none.
     async fn friends<'ctx>(&self, ctx: &Context<'ctx>) -> Vec<Character> {
-        // let star_wars = ctx.data_unchecked::<StarWars>();
-        // star_wars
-        //     .friends(self.0)
-        //     .into_iter()
-        //     .map(|ch| {
-        //         if ch.is_human {
-        //             Human(ch).into()
-        //         } else {
-        //             Droid(ch).into()
-        //         }
-        //     })
-        //     .collect()
-        vec![]
+        let redis_client = ctx.data_unchecked::<bb8::Pool<RedisConnectionManager>>();
+        let x = self.0.friends.iter().map(|id| async move {
+            let mut conn = redis_client.get().await.unwrap();
+            let reply: String = get_data_from_redis(&mut *conn, format!("{}*", id)).await.unwrap();
+            let friend: StarWarsChar = serde_json::from_str(&reply).unwrap();
+            if friend.is_human{
+                Human(friend).into()
+            }else{
+                Droid(friend).into()
+            }
+        }).collect::<Vec<_>>();
+        let friends_list: Vec<Character> = future::join_all( x).await;
+        friends_list
     }
 
     /// Which movies they appear in.
@@ -87,7 +102,7 @@ impl Human {
     }
 }
 
-#[derive(Deserialize, Serialize)]
+#[derive(Deserialize, Serialize, Debug)]
 pub struct Droid(StarWarsChar);
 
 /// A mechanical creature in the Star Wars universe.
@@ -146,19 +161,15 @@ impl QueryRoot {
         // let star_wars = ctx.data_unchecked::<StarWars>();
         let redis_client = ctx.data_unchecked::<bb8::Pool<RedisConnectionManager>>();
         let mut conn = redis_client.get().await.unwrap();
-        // let reply: String = cmd("GET").arg("foo").query_async(&mut *conn).await.unwrap();
-        println!("jdhjffd");
 
         match episode {
             Some(episode_name) => {
                 if episode_name == Episode::Empire {
-                    let key: Vec<String> = cmd("KEYS").arg("*luke").query_async(&mut *conn).await.unwrap();
-                    let reply: String = cmd("GET").arg(key.get(0)).query_async(&mut *conn).await.unwrap();
+                    let reply: String = get_data_from_redis(&mut *conn, "*luke".to_string()).await.unwrap();
                     let luke: StarWarsChar = serde_json::from_str(&reply).unwrap();
                     Human(luke).into()
                 } else {
-                    // Droid(star_wars.chars.get(star_wars.artoo).unwrap()).into()
-                    let reply: String = cmd("GET").arg("*artoo").query_async(&mut *conn).await.unwrap();
+                    let reply: String = get_data_from_redis(&mut *conn, "*artoo".to_string()).await.unwrap();
                     let artoo: StarWarsChar = serde_json::from_str(&reply).unwrap();
                     Droid(artoo).into()
                 }
@@ -221,7 +232,7 @@ impl QueryRoot {
     }
 }
 
-#[derive(Interface, Deserialize, Serialize)]
+#[derive(Interface, Deserialize, Serialize, Debug)]
 #[graphql(
     field(name = "id", type = "String"),
     field(name = "name", type = "String"),

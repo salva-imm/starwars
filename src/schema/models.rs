@@ -1,4 +1,4 @@
-#![allow(clippy::needless_lifetimes)]
+
 
 use async_graphql::{
     connection::{query, Connection, Edge},

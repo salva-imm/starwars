@@ -25,7 +25,7 @@ async fn index_playground() -> Result<HttpResponse> {
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
     let manager = RedisConnectionManager::new("redis://localhost:6379").unwrap();
-    let pool = bb8::Pool::builder().build(manager).await.unwrap();
+    let pool = bb8::Pool::builder().max_size(50).build(manager).await.unwrap();
     // crash on startup if redis not available
     // let pool = pool.clone();
     // let mut conn = pool.get().await.unwrap();

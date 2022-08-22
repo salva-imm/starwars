@@ -8,11 +8,10 @@ futures = "0.3"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 async-graphql = "4"
-async-graphql-actix-web = "4"
+async-graphql-warp = "4.0.10"
 redis = { version = "0.21.5", features = ["tokio-comp"] }
-actix-web = { version = "4", default-features = false, features = ["macros"] }
 tokio = { version = "1", features = ["full"] }
+futures-util = { version = "0.3.0", default-features = false, features = [ "sink", ] }
+warp = "0.3"
+http = "0.2"
 bb8-redis = "0.11.0"
-
-[profile.release]
-opt-level = 3

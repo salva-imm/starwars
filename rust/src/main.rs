@@ -1,49 +1,64 @@
-use actix_web::{guard, web, web::Data, App, HttpResponse, HttpServer, Result};
+use std::convert::Infallible;
+
 use async_graphql::{
     http::{playground_source, GraphQLPlaygroundConfig},
     EmptyMutation, EmptySubscription, Schema,
 };
+use async_graphql_warp::{GraphQLBadRequest, GraphQLResponse};
+use http::StatusCode;
+
+use warp::{http::Response as HttpResponse, Filter, Rejection};
+
 use bb8_redis::{
     bb8,
     RedisConnectionManager
 };
 mod schema;
-use async_graphql_actix_web::{GraphQLRequest, GraphQLResponse};
-use crate::schema::models::{QueryRoot, StarWarsSchema};
+use crate::schema::models::QueryRoot;
 
-async fn index(schema: web::Data<StarWarsSchema>, req: GraphQLRequest) -> GraphQLResponse {
-    schema.execute(req.into_inner()).await.into()
-}
 
-async fn index_playground() -> Result<HttpResponse> {
-    let source = playground_source(GraphQLPlaygroundConfig::new("/").subscription_endpoint("/"));
-    Ok(HttpResponse::Ok()
-        .content_type("text/html; charset=utf-8")
-        .body(source))
-}
 
-#[actix_web::main]
-async fn main() -> std::io::Result<()> {
+#[tokio::main]
+async fn main() {
+
     let manager = RedisConnectionManager::new("redis://localhost:6379").unwrap();
     let pool = bb8::Pool::builder().max_size(50).build(manager).await.unwrap();
-    // crash on startup if redis not available
-    // let pool = pool.clone();
-    // let mut conn = pool.get().await.unwrap();
-
-
     let schema = Schema::build(QueryRoot, EmptyMutation, EmptySubscription)
         .data(pool.clone())
         .finish();
 
     println!("Playground: http://localhost:8000");
 
-    HttpServer::new(move || {
-        App::new()
-            .app_data(Data::new(schema.clone()))
-            .service(web::resource("/").guard(guard::Post()).to(index))
-            .service(web::resource("/").guard(guard::Get()).to(index_playground))
-    })
-    .bind("127.0.0.1:8000")?
-    .run()
-    .await
+    let graphql_post = async_graphql_warp::graphql(schema).and_then(
+        |(schema, request): (
+            Schema<QueryRoot, EmptyMutation, EmptySubscription>,
+            async_graphql::Request,
+        )| async move {
+            Ok::<_, Infallible>(GraphQLResponse::from(schema.execute(request).await))
+        },
+    );
+
+    let graphql_playground = warp::path::end().and(warp::get()).map(|| {
+        HttpResponse::builder()
+            .header("content-type", "text/html")
+            .body(playground_source(GraphQLPlaygroundConfig::new("/")))
+    });
+
+    let routes = graphql_playground
+        .or(graphql_post)
+        .recover(|err: Rejection| async move {
+            if let Some(GraphQLBadRequest(err)) = err.find() {
+                return Ok::<_, Infallible>(warp::reply::with_status(
+                    err.to_string(),
+                    StatusCode::BAD_REQUEST,
+                ));
+            }
+
+            Ok(warp::reply::with_status(
+                "INTERNAL_SERVER_ERROR".to_string(),
+                StatusCode::INTERNAL_SERVER_ERROR,
+            ))
+        });
+
+    warp::serve(routes).run(([0, 0, 0, 0], 8000)).await;
 }

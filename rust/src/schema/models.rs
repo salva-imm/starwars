@@ -1,14 +1,9 @@
-
-
 use async_graphql::{
     connection::{query, Connection, Edge},
     Context, Enum, Error, Interface, Object, OutputType, Result,
 };
 use serde::{Deserialize, Serialize};
 
-use async_graphql::{EmptyMutation, EmptySubscription, Schema};
-
-pub type StarWarsSchema = Schema<QueryRoot, EmptyMutation, EmptySubscription>;
 
 use bb8_redis::{
     bb8,
@@ -78,8 +73,8 @@ impl Human {
 
     /// The friends of the human, or an empty list if they have none.
     async fn friends<'ctx>(&self, ctx: &Context<'ctx>) -> Vec<Character> {
-        let redis_client = ctx.data_unchecked::<bb8::Pool<RedisConnectionManager>>();
         let x = self.0.friends.iter().map(|id| async move {
+            let redis_client = ctx.data_unchecked::<bb8::Pool<RedisConnectionManager>>();
             let mut conn = redis_client.get().await.unwrap();
             let reply: String = get_data_from_redis(&mut *conn, format!("{}*", id)).await.unwrap();
             let friend: StarWarsChar = serde_json::from_str(&reply).unwrap();

@@ -1,5 +1,3 @@
-
-
 use async_graphql::{
     connection::{query, Connection, Edge},
     Context, Enum, Error, Interface, Object, OutputType, Result,
@@ -9,14 +7,13 @@ use serde::{Deserialize, Serialize};
 use async_graphql::{EmptyMutation, EmptySubscription, Schema};
 
 pub type StarWarsSchema = Schema<QueryRoot, EmptyMutation, EmptySubscription>;
-
-use bb8_redis::{
-    bb8,
-    redis::cmd,
-    RedisConnectionManager,
-};
-use bb8_redis::bb8::PooledConnection;
 use futures::future;
+
+
+use actix_redis::{Command, RedisActor, resp_array};
+use actix::Addr;
+use redis_async::resp::FromResp;
+use redis_async::resp::RespValue::Array;
 
 
 /// One of the films in the Star Wars Trilogy
@@ -46,21 +43,57 @@ pub struct StarWarsChar {
 #[derive(Deserialize, Serialize, Debug)]
 pub struct Human(StarWarsChar);
 
-async fn get_redis_conn<'ctx>(ctx: &Context<'ctx>) -> PooledConnection<'ctx, RedisConnectionManager>{
-    let redis_client = ctx.data_unchecked::<bb8::Pool<RedisConnectionManager>>();
-    redis_client.get().await.unwrap()
+async fn actor_get_value_by_key_pattern(actor: &Addr<RedisActor>, key: &str) -> String {
+    let res = actor.send(Command(resp_array!["KEYS", key])).await;
+        let mut redis_key = String::new();
+        match res {
+                Ok(Ok(Array(val))) => {
+                    redis_key = String::from_resp(val[0].clone()).unwrap();
+                }
+                _ => (),
+            }
+        let res2 = actor.send(Command(resp_array!["GET", redis_key])).await;
+        let mut value = String::new();
+
+        match res2 {
+                Ok(Ok(val)) => {
+                    value = String::from_resp(val).unwrap();
+                }
+                _ => (),
+            }
+        value
 }
 
-async fn get_data_from_redis(conn: &mut bb8_redis::redis::aio::Connection, key: String) -> Result<String> {
-    let key: Vec<String> = cmd("KEYS")
-        .arg(key)
-        .query_async(conn)
-        .await.unwrap();
-    let data: String = cmd("GET")
-        .arg(key.get(0))
-        .query_async(conn)
-        .await?;
-    Ok(data)
+async fn actor_mget_redis_values_by_pattern(actor: &Addr<RedisActor>, key: &str) -> Vec<String> {
+    let res = actor.send(Command(resp_array!["KEYS", key])).await;
+        let mut redis_key: Vec<String> = Vec::new();
+        match res {
+                Ok(Ok(Array(val))) => {
+                    val.iter().for_each(|x| {
+                        redis_key.push(String::from_resp(x.clone()).unwrap());
+                    });
+
+                }
+                _ => (),
+            }
+        let res2 = actor.send(Command(resp_array!["MGET", ""].append(redis_key))).await;
+        let mut value: Vec<String> = Vec::new();
+
+        match res2 {
+                Ok(Ok(Array(val))) => {
+                    val.iter().for_each(|x| {
+                        let my_str = String::from_resp(x.clone());
+                        if my_str.is_ok(){
+                            value.push(my_str.unwrap());
+                        }
+                    });
+                    // let my_str = String::from_resp(val).unwrap();
+                    //
+                    // value.push(my_str);
+                }
+                _ => (),
+            }
+    value
 }
 
 /// A humanoid creature in the Star Wars universe.
@@ -78,10 +111,9 @@ impl Human {
 
     /// The friends of the human, or an empty list if they have none.
     async fn friends<'ctx>(&self, ctx: &Context<'ctx>) -> Vec<Character> {
-        let redis_client = ctx.data_unchecked::<bb8::Pool<RedisConnectionManager>>();
         let x = self.0.friends.iter().map(|id| async move {
-            let mut conn = redis_client.get().await.unwrap();
-            let reply: String = get_data_from_redis(&mut *conn, format!("{}*", id)).await.unwrap();
+            let r = ctx.data_unchecked::<Addr<RedisActor>>();
+            let reply: String = actor_get_value_by_key_pattern(&r, format!("{}*", id).as_str()).await;
             let friend: StarWarsChar = serde_json::from_str(&reply).unwrap();
             if friend.is_human{
                 Human(friend).into()
@@ -122,10 +154,9 @@ impl Droid {
 
     /// The friends of the droid, or an empty list if they have none.
     async fn friends<'ctx>(&self, ctx: &Context<'ctx>) -> Vec<Character> {
-        let redis_client = ctx.data_unchecked::<bb8::Pool<RedisConnectionManager>>();
         let x = self.0.friends.iter().map(|id| async move {
-            let mut conn = redis_client.get().await.unwrap();
-            let reply: String = get_data_from_redis(&mut *conn, format!("{}*", id)).await.unwrap();
+            let r = ctx.data_unchecked::<Addr<RedisActor>>();
+            let reply: String = actor_get_value_by_key_pattern(&r, format!("{}*", id).as_str()).await;
             let friend: StarWarsChar = serde_json::from_str(&reply).unwrap();
             if friend.is_human{
                 Human(friend).into()
@@ -160,22 +191,22 @@ impl QueryRoot {
         )]
         episode: Option<Episode>,
     ) -> Character {
-        let mut conn = get_redis_conn(&ctx).await;
+        let r = ctx.data_unchecked::<Addr<RedisActor>>();
 
         match episode {
             Some(episode_name) => {
                 if episode_name == Episode::Empire {
-                    let reply: String = get_data_from_redis(&mut *conn, "*luke".to_string()).await.unwrap();
+                    let reply: String = actor_get_value_by_key_pattern(&r, "*luke").await;
                     let luke: StarWarsChar = serde_json::from_str(&reply).unwrap();
                     Human(luke).into()
                 } else {
-                    let reply: String = get_data_from_redis(&mut *conn, "*artoo".to_string()).await.unwrap();
+                    let reply: String = actor_get_value_by_key_pattern(&r, "*artoo").await;
                     let artoo: StarWarsChar = serde_json::from_str(&reply).unwrap();
                     Droid(artoo).into()
                 }
             }
             None => {
-                let reply: String = cmd("GET").arg("*luke").query_async(&mut *conn).await.unwrap();
+                let reply: String = actor_get_value_by_key_pattern(&r, "*luke").await;
                 let luke: StarWarsChar = serde_json::from_str(&reply).unwrap();
                 Human(luke).into()
             },
@@ -187,8 +218,8 @@ impl QueryRoot {
         ctx: &Context<'a>,
         #[graphql(desc = "id of the human")] id: String,
     ) -> Option<Human> {
-        let mut conn = get_redis_conn(&ctx).await;
-        let reply: String = get_data_from_redis(&mut *conn, format!("{}*", id)).await.unwrap();
+        let r = ctx.data_unchecked::<Addr<RedisActor>>();
+        let reply: String = actor_get_value_by_key_pattern(&r, format!("{}*", id).as_str()).await;
         let data: StarWarsChar = serde_json::from_str(&reply).unwrap();
         Human(data).into()
     }
@@ -201,16 +232,9 @@ impl QueryRoot {
         first: Option<i32>,
         last: Option<i32>,
     ) -> Result<Connection<usize, Human>> {
-        let mut conn = get_redis_conn(&ctx).await;
-        let keys: Vec<String> = cmd("KEYS")
-        .arg("*")
-        .query_async(&mut *conn)
-        .await?;
-        let data: Vec<String> = cmd("MGET")
-            .arg(keys)
-            .query_async(&mut *conn)
-            .await?;
-        let data = data.iter().filter(|d| {
+        let r = ctx.data_unchecked::<Addr<RedisActor>>();
+        let values = actor_mget_redis_values_by_pattern(r, "*").await;
+        let data = values.iter().filter(|d| {
              let x: StarWarsChar = serde_json::from_str(d).unwrap();
             x.is_human
         }).map(|d| {
@@ -225,8 +249,8 @@ impl QueryRoot {
         ctx: &Context<'a>,
         #[graphql(desc = "id of the droid")] id: String,
     ) -> Option<Droid> {
-        let mut conn = get_redis_conn(&ctx).await;
-        let reply: String = get_data_from_redis(&mut *conn, format!("{}*", id)).await.unwrap();
+        let r = ctx.data_unchecked::<Addr<RedisActor>>();
+        let reply: String = actor_get_value_by_key_pattern(&r, format!("{}*", id).as_str()).await;
         let data: StarWarsChar = serde_json::from_str(&reply).unwrap();
         Droid(data).into()
     }
@@ -239,16 +263,9 @@ impl QueryRoot {
         first: Option<i32>,
         last: Option<i32>,
     ) -> Result<Connection<usize, Droid>> {
-        let mut conn = get_redis_conn(&ctx).await;
-        let keys: Vec<String> = cmd("KEYS")
-        .arg("*")
-        .query_async(&mut *conn)
-        .await?;
-        let data: Vec<String> = cmd("MGET")
-            .arg(keys)
-            .query_async(&mut *conn)
-            .await?;
-        let data = data.iter().filter(|d| {
+        let r = ctx.data_unchecked::<Addr<RedisActor>>();
+        let values = actor_mget_redis_values_by_pattern(r, "*").await;
+        let data = values.iter().filter(|d| {
              let x: StarWarsChar = serde_json::from_str(d).unwrap();
             !x.is_human
         }).map(|d| {

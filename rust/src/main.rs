@@ -3,10 +3,7 @@ use async_graphql::{
     http::{playground_source, GraphQLPlaygroundConfig},
     EmptyMutation, EmptySubscription, Schema,
 };
-use bb8_redis::{
-    bb8,
-    RedisConnectionManager
-};
+use actix_redis::RedisActor;
 mod schema;
 use async_graphql_actix_web::{GraphQLRequest, GraphQLResponse};
 use crate::schema::models::{QueryRoot, StarWarsSchema};
@@ -24,15 +21,9 @@ async fn index_playground() -> Result<HttpResponse> {
 
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
-    let manager = RedisConnectionManager::new("redis://localhost:6379").unwrap();
-    let pool = bb8::Pool::builder().max_size(50).build(manager).await.unwrap();
-    // crash on startup if redis not available
-    // let pool = pool.clone();
-    // let mut conn = pool.get().await.unwrap();
-
-
+    let addr = RedisActor::start("localhost:6379");
     let schema = Schema::build(QueryRoot, EmptyMutation, EmptySubscription)
-        .data(pool.clone())
+        .data(addr.clone())
         .finish();
 
     println!("Playground: http://localhost:8000");

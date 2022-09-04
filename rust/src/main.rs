@@ -6,7 +6,9 @@ use async_graphql::{
 use actix_redis::RedisActor;
 mod schema;
 use async_graphql_actix_web::{GraphQLRequest, GraphQLResponse};
-use crate::schema::models::{QueryRoot, StarWarsSchema};
+use crate::schema::models::QueryRoot;
+
+type StarWarsSchema = Schema<QueryRoot, EmptyMutation, EmptySubscription>;
 
 async fn index(schema: web::Data<StarWarsSchema>, req: GraphQLRequest) -> GraphQLResponse {
     schema.execute(req.into_inner()).await.into()

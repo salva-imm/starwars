@@ -1,12 +1,9 @@
 use async_graphql::{
     connection::{query, Connection, Edge},
-    Context, Enum, Error, Interface, Object, OutputType, Result,
+    Context, Enum, Error, Interface, Object, OutputType, Result
 };
 use serde::{Deserialize, Serialize};
 
-use async_graphql::{EmptyMutation, EmptySubscription, Schema};
-
-pub type StarWarsSchema = Schema<QueryRoot, EmptyMutation, EmptySubscription>;
 use futures::future;
 
 
@@ -136,7 +133,7 @@ impl Human {
     }
 }
 
-#[derive(Deserialize, Serialize, Debug)]
+#[derive(Deserialize, Serialize, Clone, Debug)]
 pub struct Droid(StarWarsChar);
 
 /// A mechanical creature in the Star Wars universe.
@@ -288,17 +285,18 @@ pub enum Character {
     Droid(Droid),
 }
 
-async fn query_characters<'a, F, T>(
+async fn query_characters<'a, F, T, X>(
     after: Option<String>,
     before: Option<String>,
     first: Option<i32>,
     last: Option<i32>,
-    characters: Vec<StarWarsChar>,
+    characters: Vec<X>,
     map_to: F,
 ) -> Result<Connection<usize, T>>
 where
-    F: Fn(StarWarsChar) -> T,
+    F: Fn(X) -> T,
     T: OutputType,
+    X: Clone
 {
     query(
         after,

@@ -3,5 +3,10 @@ version: "3"
 services:
   redis:
     image: "arm64v8/redis:6.2.2-alpine"
+    container_name: starwars_redis
+    volumes:
+      - ./redis.conf:/usr/local/etc/redis/redis.conf
+      - ./rdata:/data
+    command: redis-server /usr/local/etc/redis/redis.conf
     ports:
       - 6379:6379

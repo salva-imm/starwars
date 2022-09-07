@@ -43,53 +43,37 @@ pub struct Human(StarWarsChar);
 async fn actor_get_value_by_key_pattern(actor: &Addr<RedisActor>, key: &str) -> String {
     let res = actor.send(Command(resp_array!["KEYS", key])).await;
         let mut redis_key = String::new();
-        match res {
-                Ok(Ok(Array(val))) => {
-                    redis_key = String::from_resp(val[0].clone()).unwrap();
-                }
-                _ => (),
-            }
+        if let Ok(Ok(Array(val))) = res {
+            redis_key = String::from_resp(val[0].clone()).unwrap();
+        }
         let res2 = actor.send(Command(resp_array!["GET", redis_key])).await;
         let mut value = String::new();
 
-        match res2 {
-                Ok(Ok(val)) => {
-                    value = String::from_resp(val).unwrap();
-                }
-                _ => (),
-            }
+        if let Ok(Ok(val)) = res2 {
+            value = String::from_resp(val).unwrap();
+        }
         value
 }
 
 async fn actor_mget_redis_values_by_pattern(actor: &Addr<RedisActor>, key: &str) -> Vec<String> {
     let res = actor.send(Command(resp_array!["KEYS", key])).await;
         let mut redis_key: Vec<String> = Vec::new();
-        match res {
-                Ok(Ok(Array(val))) => {
-                    val.iter().for_each(|x| {
-                        redis_key.push(String::from_resp(x.clone()).unwrap());
-                    });
-
-                }
-                _ => (),
-            }
+        if let Ok(Ok(Array(val))) = res {
+            val.iter().for_each(|x| {
+                redis_key.push(String::from_resp(x.clone()).unwrap());
+            });
+        }
         let res2 = actor.send(Command(resp_array!["MGET", ""].append(redis_key))).await;
         let mut value: Vec<String> = Vec::new();
+        if let Ok(Ok(Array(val))) = res2 {
+            val.iter().for_each(|x| {
+                let my_str = String::from_resp(x.clone());
 
-        match res2 {
-                Ok(Ok(Array(val))) => {
-                    val.iter().for_each(|x| {
-                        let my_str = String::from_resp(x.clone());
-                        if my_str.is_ok(){
-                            value.push(my_str.unwrap());
-                        }
-                    });
-                    // let my_str = String::from_resp(val).unwrap();
-                    //
-                    // value.push(my_str);
+                if let Ok(str_val) = my_str{
+                    value.push(str_val);
                 }
-                _ => (),
-            }
+            });
+        }
     value
 }
 
@@ -110,7 +94,7 @@ impl Human {
     async fn friends<'ctx>(&self, ctx: &Context<'ctx>) -> Vec<Character> {
         let x = self.0.friends.iter().map(|id| async move {
             let r = ctx.data_unchecked::<Addr<RedisActor>>();
-            let reply: String = actor_get_value_by_key_pattern(&r, format!("{}*", id).as_str()).await;
+            let reply: String = actor_get_value_by_key_pattern(r, format!("{}*", id).as_str()).await;
             let friend: StarWarsChar = serde_json::from_str(&reply).unwrap();
             if friend.is_human{
                 Human(friend).into()
@@ -153,7 +137,7 @@ impl Droid {
     async fn friends<'ctx>(&self, ctx: &Context<'ctx>) -> Vec<Character> {
         let x = self.0.friends.iter().map(|id| async move {
             let r = ctx.data_unchecked::<Addr<RedisActor>>();
-            let reply: String = actor_get_value_by_key_pattern(&r, format!("{}*", id).as_str()).await;
+            let reply: String = actor_get_value_by_key_pattern(r, format!("{}*", id).as_str()).await;
             let friend: StarWarsChar = serde_json::from_str(&reply).unwrap();
             if friend.is_human{
                 Human(friend).into()
@@ -193,17 +177,17 @@ impl QueryRoot {
         match episode {
             Some(episode_name) => {
                 if episode_name == Episode::Empire {
-                    let reply: String = actor_get_value_by_key_pattern(&r, "*luke").await;
+                    let reply: String = actor_get_value_by_key_pattern(r, "*luke").await;
                     let luke: StarWarsChar = serde_json::from_str(&reply).unwrap();
                     Human(luke).into()
                 } else {
-                    let reply: String = actor_get_value_by_key_pattern(&r, "*artoo").await;
+                    let reply: String = actor_get_value_by_key_pattern(r, "*artoo").await;
                     let artoo: StarWarsChar = serde_json::from_str(&reply).unwrap();
                     Droid(artoo).into()
                 }
             }
             None => {
-                let reply: String = actor_get_value_by_key_pattern(&r, "*luke").await;
+                let reply: String = actor_get_value_by_key_pattern(r, "*luke").await;
                 let luke: StarWarsChar = serde_json::from_str(&reply).unwrap();
                 Human(luke).into()
             },
@@ -216,7 +200,7 @@ impl QueryRoot {
         #[graphql(desc = "id of the human")] id: String,
     ) -> Option<Human> {
         let r = ctx.data_unchecked::<Addr<RedisActor>>();
-        let reply: String = actor_get_value_by_key_pattern(&r, format!("{}*", id).as_str()).await;
+        let reply: String = actor_get_value_by_key_pattern(r, format!("{}*", id).as_str()).await;
         let data: StarWarsChar = serde_json::from_str(&reply).unwrap();
         Human(data).into()
     }
@@ -247,7 +231,7 @@ impl QueryRoot {
         #[graphql(desc = "id of the droid")] id: String,
     ) -> Option<Droid> {
         let r = ctx.data_unchecked::<Addr<RedisActor>>();
-        let reply: String = actor_get_value_by_key_pattern(&r, format!("{}*", id).as_str()).await;
+        let reply: String = actor_get_value_by_key_pattern(r, format!("{}*", id).as_str()).await;
         let data: StarWarsChar = serde_json::from_str(&reply).unwrap();
         Droid(data).into()
     }
